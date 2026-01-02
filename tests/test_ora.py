@@ -3,7 +3,6 @@ import numpy as np
 import pytest
 from polyrat.ora import (
     ORARationalApproximation,
-    ora_fit, numfit, denfit,
     vandermonde_real, _stack_real_imag, _unstack_real_imag
 )
 from polyrat.arnoldi_real import lanczos_real, RealPolynomialBasis
@@ -59,7 +58,10 @@ class TestRealCoefficientEnforcement:
         # p(s) = 1 + 2*s + 3*s^2 (real coeffs)
         f = 1 + 2*s + 3*s**2
 
-        Q, coeffs, res = numfit(s, f, num_degree=2)
+        basis = RealPolynomialBasis(s, degree=2)
+        Q = basis.vandermonde_X
+        b = _stack_real_imag(f)
+        coeffs, _, _, _ = np.linalg.lstsq(Q, b, rcond=None)
 
         # Coefficients should be real
         assert np.isrealobj(coeffs), "Numerator coefficients should be real"

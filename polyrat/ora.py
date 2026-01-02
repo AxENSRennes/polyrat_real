@@ -242,7 +242,7 @@ def ora_fit_real(s, y, num_degree, denom_degree, maxiter=20, xtol=1e-7,
                 Polynomial(denom_basis, b)
             )
 
-        hist.append({'fit': fit.copy(), 'cond': cond})
+        hist.append({'fit': fit.copy(), 'cond': cond, 'res_norm': res_norm})
 
         if verbose:
             printer.print_iter(it=it, res_norm=res_norm, delta_fit=delta_fit, cond=cond)
@@ -437,70 +437,3 @@ class ORARationalApproximation(RationalApproximation):
             Real denominator coefficients (in orthogonal basis)
         """
         return self.numerator.coef, self.denominator.coef
-
-
-# Keep old function names for backwards compatibility
-def numfit(s, f, num_degree, denom_weights=None):
-    """Legacy numfit function. Use ORARationalApproximation instead."""
-    s = np.asarray(s).flatten()
-    M = len(s)
-
-    if denom_weights is None:
-        denom_weights = np.ones(M, dtype=complex)
-
-    basis = RealPolynomialBasis(s, num_degree)
-    Q = basis.vandermonde_X
-
-    f = np.asarray(f).flatten()
-    target = denom_weights * f
-    b = _stack_real_imag(target)
-
-    coeffs, residual, rank, sv = np.linalg.lstsq(Q, b, rcond=None)
-    res_norm = np.linalg.norm(b - Q @ coeffs)
-
-    return Q, coeffs, res_norm
-
-
-def denfit(s, f, num_degree, denom_degree, denom_init=None, method='svd'):
-    """Legacy denfit function. Use ORARationalApproximation instead."""
-    s = np.asarray(s).flatten()
-    M = len(s)
-
-    if denom_init is None:
-        denom_init = np.ones(M, dtype=complex)
-
-    num_basis = RealPolynomialBasis(s, num_degree)
-    denom_basis = RealPolynomialBasis(s, denom_degree)
-
-    P = num_basis.vandermonde_X
-    Q = denom_basis.vandermonde_X
-
-    f = np.asarray(f).flatten()
-    y_stacked = _stack_real_imag(f)
-
-    a, b, cond = minimize_2norm_varpro_real(P, Q, y_stacked, M)
-
-    denom_stacked = Q @ b
-    denom_vals = _unstack_real_imag(denom_stacked, M)
-
-    # Compute poles
-    denom_poly = RealPolynomial(denom_basis, b)
-    poles = denom_poly.roots()
-    poles = _flip_unstable_poles(poles)
-
-    return denom_vals, poles, b, cond
-
-
-def ora_fit(s, f, num_degree, denom_degree, maxiter=50, ftol=1e-10, verbose=False):
-    """Legacy ora_fit function. Use ORARationalApproximation instead."""
-    ora = ORARationalApproximation(
-        num_degree, denom_degree, maxiter=maxiter, xtol=ftol, verbose=verbose
-    )
-    ora.fit(s.reshape(-1, 1), f)
-
-    info = {
-        'iterations': len(ora.hist),
-        'residuals': [h.get('res_norm', 0) for h in ora.hist] if ora.hist else [],
-    }
-
-    return ora.numerator.coef, ora.denominator.coef, ora.poles, info
