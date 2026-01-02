@@ -9,7 +9,7 @@ from .index import *
 def _update_rule(indices, idx):
 	diff = indices - idx
 	j = np.min(np.argwhere( (np.sum(np.abs(diff), axis = 1) <= 1) & (np.min(diff, axis = 1) == -1)))
-	i = int(np.argwhere(diff[j] == -1))
+	i = np.argwhere(diff[j] == -1).item()
 	return i, j	
 
 #def _update_rule_max(idx, ids):
