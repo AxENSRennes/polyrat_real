@@ -8,6 +8,7 @@ install_requires = [
 	'iterprinter',
 	'cvxopt',
 	'cvxpy',
+	'sympy',
 	] 
 
 try:

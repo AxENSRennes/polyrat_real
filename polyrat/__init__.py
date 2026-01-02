@@ -19,3 +19,13 @@ from .paaa import *
 from .skiter import *
 from .skiter_stabilized import *
 from .pole_residue import *
+
+# Real coefficient enforcement (ORA)
+from .arnoldi_real import *
+from .ora import *
+
+# Circuit S-parameter generation (requires sympy)
+try:
+    from .circuits import *
+except ImportError:
+    pass  # sympy not installed
