@@ -264,6 +264,9 @@ class RealPolynomialBasis:
     This class constructs an orthogonal polynomial basis using the
     stacked real/imaginary representation from the ORA algorithm.
 
+    Includes frequency normalization for numerical stability with
+    wide frequency ranges.
+
     Parameters
     ----------
     s : np.ndarray
@@ -272,14 +275,28 @@ class RealPolynomialBasis:
         Polynomial degree
     weight : np.ndarray, optional
         Weight vector for rational fitting
+    normalize : bool, optional
+        Whether to normalize frequency for numerical stability (default True)
     """
 
-    def __init__(self, s, degree, weight=None):
+    def __init__(self, s, degree, weight=None, normalize=True):
         self.s = np.asarray(s).flatten()
         self.degree = degree
         self.M = len(self.s)
+        self.normalize = normalize
+        self.dim = 1  # For compatibility with Polynomial.roots
 
-        self._Q, self._H = vandermonde_real(self.s, degree, weight)
+        # Frequency normalization for numerical stability
+        if normalize:
+            self.s_scale = np.max(np.abs(self.s))
+            if self.s_scale < 1e-14:
+                self.s_scale = 1.0
+            s_norm = self.s / self.s_scale
+        else:
+            self.s_scale = 1.0
+            s_norm = self.s
+
+        self._Q, self._H = vandermonde_real(s_norm, degree, weight)
         self._Q.flags.writeable = False
 
     @property
@@ -306,5 +323,67 @@ class RealPolynomialBasis:
         -------
         np.ndarray
             Basis matrix at new points
+
+        Note
+        ----
+        For the same points as training, returns the stored basis.
+        For new points, builds a new basis with the same normalization.
         """
-        return vandermonde_real(s, self.degree, weight)[0]
+        s = np.asarray(s).flatten()
+
+        # If same points as training, return stored basis
+        if len(s) == len(self.s) and np.allclose(s, self.s):
+            return self._Q
+
+        # For new points, build basis with same normalization
+        if self.normalize:
+            s_norm = s / self.s_scale
+        else:
+            s_norm = s
+        return vandermonde_real(s_norm, self.degree, weight)[0]
+
+    def roots(self, coef):
+        """Compute roots of polynomial with given coefficients.
+
+        Parameters
+        ----------
+        coef : np.ndarray
+            Polynomial coefficients in the orthogonal basis
+
+        Returns
+        -------
+        np.ndarray
+            Roots (poles) of the polynomial
+        """
+        degree = len(coef) - 1
+        if degree == 0:
+            return np.array([])
+
+        # Evaluate polynomial at training points
+        poly_stacked = self._Q @ coef
+        M = len(self.s)
+        poly_vals = _unstack_real_imag(poly_stacked, M)
+
+        # Fit monomial polynomial and find roots
+        omega = self.s.imag
+        if np.allclose(self.s.real, 0):
+            # Pure imaginary case: s = j*omega
+            V = np.vander(omega / self.s_scale, degree + 1, increasing=True)
+            j_powers = np.array([1j**k for k in range(degree + 1)])
+            A = np.vstack([
+                (V * j_powers.real).T.real.T,
+                (V * j_powers.imag).T.real.T
+            ])
+            b = np.concatenate([poly_vals.real, poly_vals.imag])
+            mono_coeffs, _, _, _ = np.linalg.lstsq(A, b, rcond=None)
+            # Scale coefficients back
+            for k in range(degree + 1):
+                mono_coeffs[k] /= self.s_scale**k
+        else:
+            # General complex case
+            V = np.vander(self.s, degree + 1, increasing=True)
+            A = np.vstack([V.real, V.imag])
+            b = np.concatenate([poly_vals.real, poly_vals.imag])
+            mono_coeffs, _, _, _ = np.linalg.lstsq(A, b, rcond=None)
+
+        return np.roots(mono_coeffs[::-1])
