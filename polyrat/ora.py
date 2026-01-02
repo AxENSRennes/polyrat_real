@@ -60,31 +60,50 @@ def minimize_2norm_varpro_real(P, Q, y_stacked, M):
         Numerator basis (stacked real)
     Q : np.ndarray (2M, denom_deg+1)
         Denominator basis (stacked real)
-    y_stacked : np.ndarray (2M,)
-        Target values (stacked real)
+    y_stacked : np.ndarray (2M,) or (2M, nout)
+        Target values (stacked real), single or multi-output
     M : int
         Number of complex frequency points
 
     Returns
     -------
-    a : np.ndarray
+    a : np.ndarray (num_deg+1,) or (num_deg+1, nout)
         Numerator coefficients
-    b : np.ndarray
-        Denominator coefficients
+    b : np.ndarray (denom_deg+1,)
+        Denominator coefficients (shared across outputs)
     cond : float
         Condition number indicator
     """
     # QR factorization of P for projection
     Q_P, R_P = np.linalg.qr(P, mode='reduced')
 
-    # Build F @ Q: multiply each column of Q by y (in complex domain)
     n_denom = Q.shape[1]
-    FQ = np.zeros_like(Q)
-    for k in range(n_denom):
-        FQ[:, k] = _stacked_complex_multiply(y_stacked, Q[:, k], M)
+    n_num = P.shape[1]
 
-    # Project out numerator subspace: A = (I - P @ P^T) @ FQ
-    A = FQ - Q_P @ (Q_P.T @ FQ)
+    # Handle multi-output: y_stacked can be (2M,) or (2M, nout)
+    y_stacked = np.asarray(y_stacked)
+    if y_stacked.ndim == 1:
+        nout = 1
+        y_list = [y_stacked]
+    else:
+        nout = y_stacked.shape[1]
+        y_list = [y_stacked[:, j] for j in range(nout)]
+
+    # Build projected matrices for all outputs and stack BEFORE SVD
+    # This ensures the denominator is fit using all outputs jointly
+    A_blocks = []
+    for y_j in y_list:
+        # Build F @ Q: multiply each column of Q by y_j (in complex domain)
+        FQ = np.zeros_like(Q)
+        for k in range(n_denom):
+            FQ[:, k] = _stacked_complex_multiply(y_j, Q[:, k], M)
+
+        # Project out numerator subspace: A_j = (I - P @ P^T) @ FQ
+        A_j = FQ - Q_P @ (Q_P.T @ FQ)
+        A_blocks.append(A_j)
+
+    # Stack all outputs for joint denominator fitting
+    A = np.vstack(A_blocks)
 
     # Find denominator coefficients via SVD (null space)
     U, sigma, VH = np.linalg.svd(A, full_matrices=False)
@@ -99,10 +118,16 @@ def minimize_2norm_varpro_real(P, Q, y_stacked, M):
     b = VH[-1, :].real  # Last row of VH (smallest singular value)
     b = b / b[0]  # Normalize
 
-    # Compute numerator coefficients: a = R^{-1} @ Q^T @ (F @ Q @ b)
+    # Compute numerator coefficients for each output using shared b
     Qb = Q @ b
-    FQb = _stacked_complex_multiply(y_stacked, Qb, M)
-    a = scipy.linalg.solve_triangular(R_P, Q_P.T @ FQb)
+    if nout == 1:
+        FQb = _stacked_complex_multiply(y_list[0], Qb, M)
+        a = scipy.linalg.solve_triangular(R_P, Q_P.T @ FQb)
+    else:
+        a = np.zeros((n_num, nout))
+        for j, y_j in enumerate(y_list):
+            FQb = _stacked_complex_multiply(y_j, Qb, M)
+            a[:, j] = scipy.linalg.solve_triangular(R_P, Q_P.T @ FQb)
 
     return a, b, cond
 
@@ -173,18 +198,15 @@ def ora_fit_real(s, y, num_degree, denom_degree, maxiter=20, xtol=1e-7,
         P = num_basis.vandermonde_X
         Q = denom_basis.vandermonde_X
 
-        # Stack target values
+        # Stack target values (single or multi-output)
+        # For multi-output, all outputs are stacked and solved jointly
+        # to ensure the shared denominator is fit using all outputs
         if nout == 1:
             y_stacked = _stack_real_imag(y_flat[:, 0])
-            a, b, cond = minimize_2norm_varpro_real(P, Q, y_stacked, M)
         else:
-            # Multi-output: solve for each output, share denominator
-            a_all = []
-            for j in range(nout):
-                y_stacked = _stack_real_imag(y_flat[:, j])
-                a_j, b, cond = minimize_2norm_varpro_real(P, Q, y_stacked, M)
-                a_all.append(a_j)
-            a = np.column_stack(a_all)
+            y_stacked = np.column_stack([_stack_real_imag(y_flat[:, j]) for j in range(nout)])
+
+        a, b, cond = minimize_2norm_varpro_real(P, Q, y_stacked, M)
 
         # Evaluate fit
         Pa = P @ a

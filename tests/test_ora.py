@@ -161,6 +161,45 @@ class TestArrayValued:
         # Check shape
         assert H_fit.shape == (M,) or H_fit.shape == (M, 2)
 
+    def test_multioutput_joint_denominator_fit(self):
+        """Regression test: verify denominator is fit using ALL outputs jointly.
+
+        This test creates multiple outputs sharing the SAME denominator but with
+        different numerators. The buggy code would fit the denominator using only
+        the last output, resulting in poor fits for earlier outputs.
+        """
+        omega = np.logspace(6, 10, 100)
+        s = 1j * omega
+        M = len(s)
+
+        # Create 3 outputs with SAME denominator but different numerators
+        # H_k(s) = (a_k + b_k*s) / (1 + 2*s*tau + (s*tau)^2)
+        tau = 1e-9
+        denom = 1 + 2*s*tau + (s*tau)**2
+
+        H = np.zeros((M, 3), dtype=complex)
+        H[:, 0] = (1.0 + 0.5*s*tau) / denom  # First output
+        H[:, 1] = (0.8 - 0.3*s*tau) / denom  # Second output
+        H[:, 2] = (0.5 + 0.2*s*tau) / denom  # Third output
+
+        ora = ORARationalApproximation(num_degree=1, denom_degree=2, maxiter=30, verbose=False)
+        ora.fit(s, H)
+        H_fit = ora(s)
+
+        # Compute relative error for each output
+        rel_err = np.zeros(3)
+        for j in range(3):
+            rel_err[j] = np.linalg.norm(H[:, j] - H_fit[:, j]) / np.linalg.norm(H[:, j])
+
+        # All outputs should be fit well (not just the last one!)
+        for j in range(3):
+            assert rel_err[j] < 0.01, f"Output {j} has rel error {rel_err[j]:.4f}, expected < 0.01"
+
+        # The errors should be comparable (not first >> last)
+        # This would fail with the buggy code where only last output was used for denominator
+        assert rel_err[0] < 10 * rel_err[2], \
+            f"First output error {rel_err[0]:.4f} >> last {rel_err[2]:.4f}; denominator may not use all outputs"
+
 
 class TestIntegrationWithCircuits:
     """Integration tests with circuit-generated data."""
